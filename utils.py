@@ -1,7 +1,7 @@
 import cv2
-import numpy as np
+import torch
 import random
-
+import numpy as np
 
 def get_random_perspective_corners(bg_w, bg_h):
     
@@ -112,3 +112,22 @@ def generate_synthetic_sample(clean_scan, background_img):
     final_img = apply_jpeg_compression(img_uint8)
     
     return final_img, corners
+
+def generate_target_heatmaps(corners_batch, image_size=256, sigma=7.0):
+    batch_size = corners_batch.shape[0]
+    heatmaps = torch.zeros((batch_size, 4, image_size, image_size), device=corners_batch.device)
+    
+    y_grid, x_grid = torch.meshgrid(
+        torch.arange(image_size, device=corners_batch.device), 
+        torch.arange(image_size, device=corners_batch.device), 
+        indexing='ij'
+    )
+    
+    for b in range(batch_size):
+        coords = corners_batch[b].view(4, 2) * image_size 
+        for i in range(4):
+            x, y = coords[i][0], coords[i][1]
+            dist_sq = (x_grid - x)**2 + (y_grid - y)**2
+            heatmaps[b, i] = torch.exp(-dist_sq / (2 * sigma**2))
+            
+    return heatmaps
