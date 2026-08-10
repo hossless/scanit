@@ -22,12 +22,7 @@ def train_dry_run(model_type="direct"):
         criterion = nn.L1Loss() 
     elif model_type == "heatmap":
         model = HeatmapCornerNet().to(device)
-        def weighted_mse_loss(predictions, targets):
-            weights = (targets * 100) + 1.0 
-            squared_error = (predictions - targets) ** 2
-            return torch.mean(weights * squared_error)
-        
-        criterion = weighted_mse_loss
+        criterion = nn.MSELoss()
     else:
         raise ValueError("model_type must be 'direct' or 'heatmap'")
 
