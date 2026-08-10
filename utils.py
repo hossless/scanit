@@ -4,24 +4,41 @@ import random
 import numpy as np
 
 def get_random_perspective_corners(bg_w, bg_h):
+    scale = random.uniform(0.3, 0.9)
+    doc_w = bg_w * scale
+    doc_h = bg_h * scale
+
+    cx = random.randint(int(doc_w/2), int(bg_w - doc_w/2))
+    cy = random.randint(int(doc_h/2), int(bg_h - doc_h/2))
+
+    half_w, half_h = doc_w / 2, doc_h / 2
+    corners = np.array([
+        [-half_w, -half_h],
+        [half_w, -half_h],
+        [half_w, half_h],
+        [-half_w, half_h]
+    ])
+
+    angle = random.uniform(-75, 75)
+    theta = np.radians(angle)
+    cos_a, sin_a = np.cos(theta), np.sin(theta)
+    rotation_matrix = np.array([
+        [cos_a, -sin_a],
+        [sin_a, cos_a]
+    ])
     
-    margin = 100 
-    wiggle_room = 60  
-    
-    base_corners = [
-        [margin, margin],                         
-        [bg_w - margin, margin],                  
-        [bg_w - margin, bg_h - margin],           
-        [margin, bg_h - margin]                   
-    ]
-    
-    randomized_corners = []
-    for x, y in base_corners:
-        rand_x = x + random.randint(-wiggle_room, wiggle_room)
-        rand_y = y + random.randint(-wiggle_room, wiggle_room)
-        randomized_corners.append([rand_x, rand_y])
-        
-    return np.float32(randomized_corners)
+    rotated_corners = np.dot(corners, rotation_matrix.T)
+    shifted_corners = rotated_corners + np.array([cx, cy])
+
+    wiggle = int(min(bg_w, bg_h) * 0.05) 
+    for i in range(4):
+        shifted_corners[i][0] += random.randint(-wiggle, wiggle)
+        shifted_corners[i][1] += random.randint(-wiggle, wiggle)
+
+    shifted_corners[:, 0] = np.clip(shifted_corners[:, 0], 0, bg_w)
+    shifted_corners[:, 1] = np.clip(shifted_corners[:, 1], 0, bg_h)
+
+    return np.float32(shifted_corners)
 
 def warp_scan_to_background(clean_scan, background_img):
     scan_h, scan_w = clean_scan.shape[:2]
@@ -33,14 +50,11 @@ def warp_scan_to_background(clean_scan, background_img):
     
     dst_points = get_random_perspective_corners(bg_w, bg_h)
     
-    
     matrix = cv2.getPerspectiveTransform(src_points, dst_points)
     warped_scan = cv2.warpPerspective(clean_scan, matrix, (bg_w, bg_h))
     
-    
     mask = np.ones((scan_h, scan_w), dtype=np.uint8) * 255
     warped_mask = cv2.warpPerspective(mask, matrix, (bg_w, bg_h))
-    
     
     background_copy = background_img.copy()
     background_copy[warped_mask == 255] = warped_scan[warped_mask == 255]
@@ -97,10 +111,8 @@ def apply_jpeg_compression(img_uint8):
     _, encoded_img = cv2.imencode('.jpg', img_uint8, encode_param)
     return cv2.imdecode(encoded_img, 1)
 
-
 def generate_synthetic_sample(clean_scan, background_img):    
     warped_composite, corners = warp_scan_to_background(clean_scan, background_img)
-    
     
     img = apply_resolution_loss(warped_composite)
     

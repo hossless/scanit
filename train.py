@@ -8,89 +8,64 @@ from torch.utils.data import DataLoader
 from utils import generate_target_heatmaps
 from model import DirectRegressionNet, HeatmapCornerNet
 
-
 def train_dry_run(model_type="direct"):
     batch_size = 4
     learning_rate = 1e-3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n--- Starting {model_type.upper()} dry run on {device} ---")
 
-    
-    dataset = DocumentDataset(
-        clean_scans_dir='data/scan',
-        backgrounds_dir='data/background',
-        image_size=256,
-        epoch_size=16  
-    )
+    dataset = DocumentDataset('/content/ready_dataset/train')
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    
     if model_type == "direct":
         model = DirectRegressionNet().to(device)
         criterion = nn.L1Loss() 
     elif model_type == "heatmap":
         model = HeatmapCornerNet().to(device)
-        criterion = nn.MSELoss()
+        def weighted_mse_loss(predictions, targets):
+            weights = (targets * 100) + 1.0 
+            squared_error = (predictions - targets) ** 2
+            return torch.mean(weights * squared_error)
+        
+        criterion = weighted_mse_loss
     else:
         raise ValueError("model_type must be 'direct' or 'heatmap'")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-    
     model.train()
     
     for batch_idx, (degraded_imgs, _, corners) in enumerate(dataloader):
         degraded_imgs = degraded_imgs.to(device)
         corners = corners.to(device) 
 
-        
         if model_type == "heatmap":
             targets = generate_target_heatmaps(corners, image_size=256)
         else:
             targets = corners
 
-        
         predictions = model(degraded_imgs)
         loss = criterion(predictions, targets)
 
-        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         print(f"Batch [{batch_idx+1}/{len(dataloader)}] - Loss: {loss.item():.4f}")
+        break 
 
     print(f"Dry run complete! {model_type.upper()} architecture is valid!")
 
-def train_model(model_type="direct", epochs=15):
+def train_model(model_type="direct", epochs=20):
     batch_size = 16
     learning_rate = 1e-3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n--- Training {model_type.upper()} on {device} ---")
     
-    base_dir = '/content/drive/MyDrive/scanit_data'
+    train_dataset = DocumentDataset('/content/ready_dataset/train')
+    val_dataset = DocumentDataset('/content/ready_dataset/val')
     
-    train_dataset = DocumentDataset(
-        clean_scans_dir=f'{base_dir}/scan/train', 
-        backgrounds_dir=f'{base_dir}/background', 
-        image_size=256, 
-        epoch_size=800
-    )
-    val_dataset = DocumentDataset(
-        clean_scans_dir=f'{base_dir}/scan/val', 
-        backgrounds_dir=f'{base_dir}/background', 
-        image_size=256, 
-        epoch_size=50
-    )
-    
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-    print("Pre-generating and freezing validation set in RAM...")
-    frozen_val_batches = []
-    for degraded_imgs, clean_imgs, corners in val_loader:
-        frozen_val_batches.append((degraded_imgs, clean_imgs, corners))
-    print(f"Frozen {len(frozen_val_batches)} validation batches.")
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
 
     if model_type == "direct":
         model = DirectRegressionNet().to(device)
@@ -128,7 +103,7 @@ def train_model(model_type="direct", epochs=15):
         model.eval()
         running_val_loss = 0.0
         with torch.no_grad():
-            for degraded_imgs, _, corners in frozen_val_batches:
+            for degraded_imgs, _, corners in val_loader:
                 degraded_imgs, corners = degraded_imgs.to(device), corners.to(device)
                 targets = generate_target_heatmaps(corners) if model_type == "heatmap" else corners
                 
@@ -136,7 +111,7 @@ def train_model(model_type="direct", epochs=15):
                 loss = criterion(predictions, targets)
                 running_val_loss += loss.item()
                 
-        avg_val_loss = running_val_loss / len(frozen_val_batches)
+        avg_val_loss = running_val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
 
         print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
@@ -156,10 +131,9 @@ def train_model(model_type="direct", epochs=15):
     plt.savefig(f'{model_type}_loss_curve.png')
     print(f"Loss curve saved as {model_type}_loss_curve.png\n")
 
-
 if __name__ == "__main__":
-    train_dry_run(model_type="direct")
-    train_dry_run(model_type="heatmap")
+    # train_dry_run(model_type="direct")
+    # train_dry_run(model_type="heatmap")
 
-    # train_model(model_type="direct", epochs=20)
+    train_model(model_type="direct", epochs=20)
     # train_model(model_type="heatmap", epochs=20)
