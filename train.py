@@ -61,7 +61,13 @@ def train_corner_model(model_type="direct", epochs=20):
         criterion = nn.L1Loss()
     elif model_type == "heatmap":
         model = HeatmapCornerNet().to(device)
-        criterion = nn.MSELoss()
+        
+        def weighted_bce_loss(predictions, targets):
+            bce = nn.functional.binary_cross_entropy(predictions, targets, reduction='none')
+            weights = (targets * 10) + 1.0 
+            return torch.mean(weights * bce)
+            
+        criterion = weighted_bce_loss
     else:
         raise ValueError("model_type must be 'direct' or 'heatmap'")
 
@@ -134,7 +140,7 @@ def train_enhancement_model(epochs=20):
 
     model = UNetEnhancer().to(device)
     
-    criterion = DocumentEnhancementLoss(alpha=1.0, beta=1.0, gamma=0.5)
+    criterion = DocumentEnhancementLoss(alpha=1.0, beta=1.0, gamma=0.5).to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     train_losses, val_losses = [], []

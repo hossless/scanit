@@ -64,7 +64,7 @@ def pre_generate_dataset(num_samples=10000, split="train"):
         clean_scan = cv2.imread(scan_path)
         background_img = cv2.resize(cv2.imread(bg_path), (800, 800))
         
-        degraded_img, corners = generate_synthetic_sample(clean_scan, background_img)
+        degraded_img, corners, _ = generate_synthetic_sample(clean_scan, background_img)
         
         degraded_resized = cv2.resize(degraded_img, (256, 256))
         

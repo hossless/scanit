@@ -129,7 +129,7 @@ def generate_synthetic_sample(clean_scan, background_img):
     
     ordered_corners = order_points(corners)
     
-    return final_img, ordered_corners
+    return final_img, ordered_corners, corners
 
 def generate_target_heatmaps(corners_batch, image_size=256, sigma=7.0):
     batch_size = corners_batch.shape[0]
@@ -151,13 +151,11 @@ def generate_target_heatmaps(corners_batch, image_size=256, sigma=7.0):
     return heatmaps
 
 def generate_enhancement_sample(clean_scan, background_img):
-    
     scan_h, scan_w = clean_scan.shape[:2]
-    degraded_photo, corners = generate_synthetic_sample(clean_scan, background_img)
     
+    degraded_photo, _, structural_corners = generate_synthetic_sample(clean_scan, background_img)
     
-    
-    src_points = corners
+    src_points = structural_corners
     dst_points = np.float32([
         [0, 0], 
         [scan_w, 0], 
@@ -167,7 +165,6 @@ def generate_enhancement_sample(clean_scan, background_img):
     
     matrix = cv2.getPerspectiveTransform(src_points, dst_points)
     rectified_degraded = cv2.warpPerspective(degraded_photo, matrix, (scan_w, scan_h))
-    
     
     final_input = cv2.resize(rectified_degraded, (512, 512))
     final_target = cv2.resize(clean_scan, (512, 512))
