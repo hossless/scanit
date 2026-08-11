@@ -111,19 +111,25 @@ def apply_jpeg_compression(img_uint8):
     _, encoded_img = cv2.imencode('.jpg', img_uint8, encode_param)
     return cv2.imdecode(encoded_img, 1)
 
+def order_points(pts):
+    center = np.mean(pts, axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    sorted_indices = np.argsort(angles)
+    return pts[sorted_indices]
+
 def generate_synthetic_sample(clean_scan, background_img):    
     warped_composite, corners = warp_scan_to_background(clean_scan, background_img)
     
     img = apply_resolution_loss(warped_composite)
-    
     img_float = img.astype(np.float32)
     img_float = apply_color_and_lighting(img_float)
     img_float = apply_shadows_and_gradients(img_float)
-    
     img_uint8 = apply_blur_and_noise(img_float)
     final_img = apply_jpeg_compression(img_uint8)
     
-    return final_img, corners
+    ordered_corners = order_points(corners)
+    
+    return final_img, ordered_corners
 
 def generate_target_heatmaps(corners_batch, image_size=256, sigma=7.0):
     batch_size = corners_batch.shape[0]
