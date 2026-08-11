@@ -6,7 +6,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import Dataset
-from utils import generate_synthetic_sample
+from utils import generate_enhancement_sample, generate_synthetic_sample
 
 class DocumentDataset(Dataset):
     def __init__(self, dataset_dir):
@@ -25,10 +25,28 @@ class DocumentDataset(Dataset):
         img_tensor = torch.from_numpy(img).float().permute(2, 0, 1) / 255.0
         corners_tensor = torch.from_numpy(corners).float().flatten()
         
-        dummy_clean = torch.zeros_like(img_tensor) 
+        return img_tensor, corners_tensor
+
+class EnhancementDataset(Dataset):
+    def __init__(self, dataset_dir):
+        self.input_paths = sorted(glob.glob(os.path.join(dataset_dir, 'inputs', '*.jpg')))
+        self.target_paths = sorted(glob.glob(os.path.join(dataset_dir, 'targets', '*.jpg')))
+
+    def __len__(self):
+        return len(self.input_paths)
+
+    def __getitem__(self, idx):
+        input_img = cv2.imread(self.input_paths[idx])
+        input_img = cv2.cvtColor(input_img, cv2.COLOR_BGR2RGB) 
         
-        return img_tensor, dummy_clean, corners_tensor
-    
+        target_img = cv2.imread(self.target_paths[idx])
+        target_img = cv2.cvtColor(target_img, cv2.COLOR_BGR2RGB)
+        
+        input_tensor = torch.from_numpy(input_img).float().permute(2, 0, 1) / 255.0
+        target_tensor = torch.from_numpy(target_img).float().permute(2, 0, 1) / 255.0
+        
+        return input_tensor, target_tensor
+
 def pre_generate_dataset(num_samples=10000, split="train"):
     base_dir = '/content/data'
     out_dir = f'/content/ready_dataset/{split}'
@@ -38,6 +56,7 @@ def pre_generate_dataset(num_samples=10000, split="train"):
     clean_scans = glob.glob(f'{base_dir}/scan/{split}/*.*')
     backgrounds = glob.glob(f'{base_dir}/background/*.*')
     
+    print(f"Generating {num_samples} CORNER samples for {split}...")
     for i in tqdm(range(num_samples)):
         scan_path = random.choice(clean_scans)
         bg_path = random.choice(backgrounds)
@@ -56,6 +75,31 @@ def pre_generate_dataset(num_samples=10000, split="train"):
         cv2.imwrite(f'{out_dir}/images/sample_{i:05d}.jpg', degraded_resized)
         np.save(f'{out_dir}/labels/sample_{i:05d}.npy', corners)
 
+def pre_generate_enhancement_dataset(num_samples=10000, split="train"):
+    base_dir = '/content/data'
+    out_dir = f'/content/ready_dataset_enhancement/{split}'
+    os.makedirs(f'{out_dir}/inputs', exist_ok=True)
+    os.makedirs(f'{out_dir}/targets', exist_ok=True)
+    
+    clean_scans = glob.glob(f'{base_dir}/scan/{split}/*.*')
+    backgrounds = glob.glob(f'{base_dir}/background/*.*')
+    
+    print(f"Generating {num_samples} ENHANCEMENT samples for {split}...")
+    for i in tqdm(range(num_samples)):
+        scan_path = random.choice(clean_scans)
+        bg_path = random.choice(backgrounds)
+        
+        clean_scan = cv2.imread(scan_path)
+        background_img = cv2.resize(cv2.imread(bg_path), (800, 800))
+        
+        degraded_input, clean_target = generate_enhancement_sample(clean_scan, background_img)
+        
+        cv2.imwrite(f'{out_dir}/inputs/sample_{i:05d}.jpg', degraded_input)
+        cv2.imwrite(f'{out_dir}/targets/sample_{i:05d}.jpg', clean_target)
+
 if __name__ == "__main__":
-    pre_generate_dataset(num_samples=8000, split="train")
-    pre_generate_dataset(num_samples=200, split="val")
+    # pre_generate_dataset(num_samples=8000, split="train")
+    # pre_generate_dataset(num_samples=200, split="val")
+    
+    pre_generate_enhancement_dataset(num_samples=8000, split="train")
+    pre_generate_enhancement_dataset(num_samples=200, split="val")

@@ -116,34 +116,34 @@ class UNetEnhancer(nn.Module):
         super(UNetEnhancer, self).__init__()
         
         # ENCODER (Downsampling & Feature Extraction)
-        # Input: (Batch, 3, 256, 256)
+        # Input: (Batch, 3, 512, 512)
         self.enc1 = nn.Sequential(nn.Conv2d(3, 32, kernel_size=3, padding=1), nn.ReLU())
-        self.pool1 = nn.MaxPool2d(2) # Output: (32, 128, 128)
+        self.pool1 = nn.MaxPool2d(2) # Output: (32, 256, 256)
         
         self.enc2 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=3, padding=1), nn.ReLU())
-        self.pool2 = nn.MaxPool2d(2) # Output: (64, 64, 64)
+        self.pool2 = nn.MaxPool2d(2) # Output: (64, 128, 128)
 
         self.enc3 = nn.Sequential(nn.Conv2d(64, 128, kernel_size=3, padding=1), nn.ReLU())
-        self.pool3 = nn.MaxPool2d(2) # Output: (128, 32, 32)
+        self.pool3 = nn.MaxPool2d(2) # Output: (128, 64, 64)
         
         # THE BOTTLENECK
         self.bottleneck = nn.Sequential(
             nn.Conv2d(128, 256, kernel_size=3, padding=1), 
             nn.ReLU()
-        ) # Output: (256, 32, 32)
+        ) # Output: (256, 64, 64)
         
         # DECODER (Upsampling & Skip Connections)
-        self.up3 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2) # Back to 64x64
+        self.up3 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2) # Back to 128x128
         self.dec3 = nn.Sequential(nn.Conv2d(128 + 128, 128, kernel_size=3, padding=1), nn.ReLU())
         
-        self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2) # Back to 128x128
+        self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2) # Back to 256x256
         self.dec2 = nn.Sequential(nn.Conv2d(64 + 64, 64, kernel_size=3, padding=1), nn.ReLU())
         
-        self.up1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2) # Back to 256x256
+        self.up1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2) # Back to 512x512
         self.dec1 = nn.Sequential(nn.Conv2d(32 + 32, 32, kernel_size=3, padding=1), nn.ReLU())
         
         # FINAL OUTPUT LAYER
-        self.final_conv = nn.Conv2d(32, 3, kernel_size=1)
+        self.final_conv = nn.Conv2d(32, 3, kernel_size=1) # Output: (3, 512, 512)
 
         self.sigmoid = nn.Sigmoid() 
 
