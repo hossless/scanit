@@ -3,11 +3,46 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
+from pytorch_msssim import ms_ssim
 from torch.utils.data import DataLoader
 from utils import generate_target_heatmaps
 from dataset import DocumentDataset, EnhancementDataset
 from model import DirectRegressionNet, HeatmapCornerNet, UNetEnhancer
 
+class SobelEdgeLoss(nn.Module):
+    def __init__(self):
+        super(SobelEdgeLoss, self).__init__()
+        kernel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]).view(1, 1, 3, 3)
+        kernel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]).view(1, 1, 3, 3)
+        self.weight_x = nn.Parameter(kernel_x.repeat(3, 1, 1, 1), requires_grad=False)
+        self.weight_y = nn.Parameter(kernel_y.repeat(3, 1, 1, 1), requires_grad=False)
+
+    def forward(self, pred, target):
+        pred_gx = F.conv2d(pred, self.weight_x, padding=1, groups=3)
+        pred_gy = F.conv2d(pred, self.weight_y, padding=1, groups=3)
+        target_gx = F.conv2d(target, self.weight_x, padding=1, groups=3)
+        target_gy = F.conv2d(target, self.weight_y, padding=1, groups=3)
+        loss_x = F.l1_loss(pred_gx, target_gx)
+        loss_y = F.l1_loss(pred_gy, target_gy)
+        return loss_x + loss_y
+
+class DocumentEnhancementLoss(nn.Module):
+    def __init__(self, alpha=1.0, beta=1.0, gamma=0.5):
+        super(DocumentEnhancementLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.l1 = nn.L1Loss()
+        self.sobel = SobelEdgeLoss()
+
+    def forward(self, pred, target):
+        l1_loss = self.l1(pred, target)
+        ssim_val = ms_ssim(pred, target, data_range=1.0, size_average=True)
+        ssim_loss = 1.0 - ssim_val
+        sobel_loss = self.sobel(pred, target)
+        total_loss = (self.alpha * l1_loss) + (self.beta * ssim_loss) + (self.gamma * sobel_loss)
+        return total_loss
 
 def train_corner_model(model_type="direct", epochs=20):
     batch_size = 16
@@ -38,7 +73,6 @@ def train_corner_model(model_type="direct", epochs=20):
     for epoch in range(epochs):
         model.train()
         running_train_loss = 0.0
-        
         
         for degraded_imgs, corners in train_loader:
             degraded_imgs, corners = degraded_imgs.to(device), corners.to(device)
@@ -86,9 +120,6 @@ def train_corner_model(model_type="direct", epochs=20):
     plt.savefig(f'{model_type}_loss_curve.png')
     print(f"Loss curve saved as {model_type}_loss_curve.png\n")
 
-
-
-
 def train_enhancement_model(epochs=20):
     batch_size = 8 
     learning_rate = 1e-4 
@@ -103,8 +134,7 @@ def train_enhancement_model(epochs=20):
 
     model = UNetEnhancer().to(device)
     
-    
-    criterion = nn.L1Loss() 
+    criterion = DocumentEnhancementLoss(alpha=1.0, beta=1.0, gamma=0.5)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     train_losses, val_losses = [], []
