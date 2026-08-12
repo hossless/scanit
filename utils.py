@@ -63,17 +63,17 @@ def warp_scan_to_background(clean_scan, background_img):
 
 def apply_resolution_loss(img):
     h, w = img.shape[:2]
-    scale_factor = random.uniform(2.0, 4.0)
+    scale_factor = random.uniform(1.2, 2.5)
     small_img = cv2.resize(img, (int(w / scale_factor), int(h / scale_factor)), interpolation=cv2.INTER_AREA)
     return cv2.resize(small_img, (w, h), interpolation=cv2.INTER_LINEAR)
 
 def apply_color_and_lighting(img_float):
-    alpha = random.uniform(0.7, 1.3)
-    beta = random.randint(-40, 40)
+    alpha = random.uniform(0.85, 1.15)
+    beta = random.randint(-15, 15)
     img_float = cv2.convertScaleAbs(img_float, alpha=alpha, beta=beta).astype(np.float32)
     
-    r_scale = random.uniform(0.8, 1.2)
-    b_scale = random.uniform(0.8, 1.2)
+    r_scale = random.uniform(0.9, 1.1)
+    b_scale = random.uniform(0.9, 1.1)
     img_float[:, :, 2] *= r_scale  
     img_float[:, :, 0] *= b_scale 
     
@@ -87,7 +87,7 @@ def apply_shadows_and_gradients(img_float):
     points = [[random.randint(0, w), random.randint(0, h)] for _ in range(num_points)]
     pts = np.array(points, np.int32).reshape((-1, 1, 2))
     
-    shadow_intensity = random.uniform(0.3, 0.7) 
+    shadow_intensity = random.uniform(0.7, 0.95) 
     cv2.fillPoly(shadow_mask, [pts], shadow_intensity)
     shadow_mask = cv2.GaussianBlur(shadow_mask, (101, 101), 50)
     
@@ -97,16 +97,16 @@ def apply_shadows_and_gradients(img_float):
     return np.clip(img_float, 0, 255)
 
 def apply_blur_and_noise(img_float):
-    blur_radius = random.choice([3, 5])
+    blur_radius = 3
     img_float = cv2.GaussianBlur(img_float, (blur_radius, blur_radius), 0)
     
-    noise = np.random.normal(0, random.uniform(2, 10), img_float.shape)
+    noise = np.random.normal(0, random.uniform(1, 5), img_float.shape)
     img_float = img_float + noise
     
     return np.clip(img_float, 0, 255).astype(np.uint8)
 
 def apply_jpeg_compression(img_uint8):
-    quality = random.randint(30, 80)
+    quality = random.randint(50, 95)
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
     _, encoded_img = cv2.imencode('.jpg', img_uint8, encode_param)
     return cv2.imdecode(encoded_img, 1)
