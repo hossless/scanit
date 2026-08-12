@@ -2,8 +2,8 @@ import os
 import cv2
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-from model import HeatmapCornerNet, UNetEnhancer
+
+from model import HeatmapCornerNet, UNetEnhancer, DirectRegressionNet
 
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -22,20 +22,35 @@ def extract_coords_from_heatmap(heatmaps):
         coords.append([x, y])
     return np.array(coords)
 
+
 class DocumentScannerEngine:
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.output_dir = "output"
         os.makedirs(self.output_dir, exist_ok=True)
+
+    def get_corner_model_info(self, version_name):
+        base_path = os.path.join("models", version_name)
+        if os.path.exists(os.path.join(base_path, "direct_best.pth")):
+            return "direct", os.path.join(base_path, "direct_best.pth")
+        elif os.path.exists(os.path.join(base_path, "heatmap_best.pth")):
+            return "heatmap", os.path.join(base_path, "heatmap_best.pth")
+        return None, None
         
     def load_corner_model(self, version_name):
-        model_path = os.path.join("models", version_name, "heatmap_best.pth")
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Corner weights missing at {model_path}")
-        model = HeatmapCornerNet().to(self.device)
+        model_type, model_path = self.get_corner_model_info(version_name)
+        
+        if not model_type:
+            raise FileNotFoundError(f"Oops! No valid weights found in models/{version_name}/")
+            
+        if model_type == "direct":
+            model = DirectRegressionNet().to(self.device)
+        else:
+            model = HeatmapCornerNet().to(self.device)
+            
         model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         model.eval()
-        return model
+        return model, model_type
 
     def load_enhancer_model(self, version_name):
         model_path = os.path.join("models", version_name, "enhancer_best.pth")
@@ -46,16 +61,21 @@ class DocumentScannerEngine:
         model.eval()
         return model
 
-    def detect_corners(self, img_rgb, corner_model):
+    def detect_corners(self, img_rgb, corner_model, model_type):
         orig_h, orig_w = img_rgb.shape[:2]
         corner_input = cv2.resize(img_rgb, (256, 256))
         corner_tensor = torch.tensor(corner_input, dtype=torch.float32).permute(2, 0, 1) / 255.0
         corner_tensor = corner_tensor.unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            heatmaps = corner_model(corner_tensor)[0].cpu().numpy()
+            predictions = corner_model(corner_tensor)[0]
             
-        raw_coords = extract_coords_from_heatmap(heatmaps)
+        if model_type == "direct":
+            raw_coords = (predictions.view(4, 2) * 256).cpu().numpy()
+        else:
+            heatmaps = predictions.cpu().numpy()
+            raw_coords = extract_coords_from_heatmap(heatmaps)
+            
         scaled_coords = np.zeros_like(raw_coords, dtype=np.float32)
         scaled_coords[:, 0] = (raw_coords[:, 0] / 256.0) * orig_w
         scaled_coords[:, 1] = (raw_coords[:, 1] / 256.0) * orig_h
@@ -63,10 +83,15 @@ class DocumentScannerEngine:
         return order_points(scaled_coords)
 
     def warp_image(self, img, ordered_corners):
-        width_A = np.sqrt(((ordered_corners[2][0] - ordered_corners[3][0]) ** 2) + ((ordered_corners[2][1] - ordered_corners[3][1]) ** 2))
-        width_B = np.sqrt(((ordered_corners[1][0] - ordered_corners[0][0]) ** 2) + ((ordered_corners[1][1] - ordered_corners[0][1]) ** 2))
+        tl, tr, br, bl = ordered_corners
+
+        width_A = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+        width_B = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
         max_width = max(int(width_A), int(width_B))
-        max_height = int(max_width * 1.414) 
+
+        height_A = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        height_B = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        max_height = max(int(height_A), int(height_B))
 
         dst_points = np.array([
             [0, 0],
@@ -115,51 +140,54 @@ class DocumentScannerEngine:
         final_img_uint8 = np.clip(final_img * 255.0, 0, 255).astype(np.uint8)
         return cv2.cvtColor(final_img_uint8, cv2.COLOR_RGB2BGR)
 
-    def process(self, image_path, corner_version=None, enhancer_version=None):
-        base_name = os.path.basename(image_path).split('.')[0]
+    def visualize_corners(self, image_path, corner_version):
+        print(f"Drawing corner detection for {corner_version}...")
         img = cv2.imread(image_path)
-        if img is None:
-            print(f"Oops! Couldn't load {image_path}")
-            return
-            
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        current_img = img
+        
+        img_resized = cv2.resize(img_rgb, (256, 256))
+        
+        corner_model, model_type = self.load_corner_model(corner_version)
+        
+        corner_tensor = torch.tensor(img_resized, dtype=torch.float32).permute(2, 0, 1) / 255.0
+        corner_tensor = corner_tensor.unsqueeze(0).to(self.device)
 
-        out_name = base_name
+        with torch.no_grad():
+            predictions = corner_model(corner_tensor)[0]
 
-        # 1. Corner Detection & Rectification
-        if corner_version:
-            print(f"Rectifying with {corner_version}...")
-            corner_model = self.load_corner_model(corner_version)
-            corners = self.detect_corners(img_rgb, corner_model)
-            current_img = self.warp_image(img, corners)
-            img_rgb = cv2.cvtColor(current_img, cv2.COLOR_BGR2RGB)
-            out_name += f"_{corner_version}"
-
-        # 2. Enhancement
-        if enhancer_version:
-            print(f"Enhancing with {enhancer_version}...")
-            enhancer_model = self.load_enhancer_model(enhancer_version)
-            current_img = self.enhance_tiled(img_rgb, enhancer_model)
-            out_name += f"_{enhancer_version}"
-
-        # 3. Save Output
-        if not corner_version and not enhancer_version:
-            print("No models selected! Nothing to do.")
-            return
-
-        final_path = os.path.join(self.output_dir, f"{out_name}.jpg")
-        cv2.imwrite(final_path, current_img)
-        print(f"Success! Saved to {final_path}")
-        return final_path
+        if model_type == "direct":
+            coords = (predictions.view(4, 2) * 256).cpu().numpy()
+        else:
+            heatmaps = predictions.cpu().numpy()
+            coords = extract_coords_from_heatmap(heatmaps)
+            
+        ordered = order_points(coords)
+        pts = np.array(ordered, np.int32).reshape((-1, 1, 2))
+        
+        cv2.polylines(img_resized, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
+        for pt in pts:
+            cv2.circle(img_resized, tuple(pt[0]), radius=5, color=(255, 0, 0), thickness=-1)
+            
+        base_name = os.path.basename(image_path).split('.')[0]
+        out_path = os.path.join(self.output_dir, f"{base_name}_{corner_version}_corners.jpg")
+        
+        final_bgr = cv2.cvtColor(img_resized, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(out_path, final_bgr)
+        return out_path
 
     def visualize_heatmaps(self, image_path, corner_version):
+        import matplotlib.pyplot as plt
         print(f"Generating heatmap visuals for {corner_version}...")
+        
+        model_type, _ = self.get_corner_model_info(corner_version)
+        if model_type == "direct":
+            return None
+            
         img = cv2.imread(image_path)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img_resized = cv2.resize(img_rgb, (256, 256))
         
-        corner_model = self.load_corner_model(corner_version)
+        corner_model, _ = self.load_corner_model(corner_version)
         
         corner_tensor = torch.tensor(img_resized, dtype=torch.float32).permute(2, 0, 1) / 255.0
         corner_tensor = corner_tensor.unsqueeze(0).to(self.device)
@@ -169,7 +197,7 @@ class DocumentScannerEngine:
 
         master_heatmap = np.max(heatmaps, axis=0)
         
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig, axes = plt.subplots(2, 3, figsize=(10, 5), dpi=100)
         axes = axes.flatten()
         
         axes[0].imshow(img_resized)
@@ -189,43 +217,39 @@ class DocumentScannerEngine:
         out_path = os.path.join(self.output_dir, f"{base_name}_{corner_version}_heatmaps.jpg")
         
         plt.tight_layout()
-        plt.savefig(out_path, bbox_inches='tight')
-        plt.close() 
-        print(f"Heatmaps saved to {out_path}")
+        plt.savefig(out_path, bbox_inches='tight', dpi=100)
+        plt.close()
         return out_path
 
-    def generate_comparison(self, raw_image_path, final_enhanced_img, out_name):
-        print("Generating side-by-side comparison...")
-        raw_img = cv2.imread(raw_image_path)
-        
-        
-        final_h, final_w = final_enhanced_img.shape[:2]
-        aspect_ratio = raw_img.shape[1] / raw_img.shape[0]
-        new_raw_w = int(final_h * aspect_ratio)
-        
-        raw_resized = cv2.resize(raw_img, (new_raw_w, final_h))
-        
-        
-        divider = np.zeros((final_h, 10, 3), dtype=np.uint8)
-        
-        
-        comparison = np.hstack((raw_resized, divider, final_enhanced_img))
-        
-        out_path = os.path.join(self.output_dir, f"{out_name}_comparison.jpg")
-        cv2.imwrite(out_path, comparison)
-        print(f"Comparison graphic saved to {out_path}")
-        return out_path
+    def process(self, image_path, corner_version=None, enhancer_version=None):
+        base_name = os.path.basename(image_path).split('.')[0]
+        img = cv2.imread(image_path)
+        if img is None:
+            print(f"Oops! Couldn't load {image_path}")
+            return
+            
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        current_img = img
+        out_name = base_name
 
+        if corner_version:
+            print(f"Rectifying with {corner_version}...")
+            corner_model, model_type = self.load_corner_model(corner_version)
+            corners = self.detect_corners(img_rgb, corner_model, model_type)
+            current_img = self.warp_image(img, corners)
+            img_rgb = cv2.cvtColor(current_img, cv2.COLOR_BGR2RGB)
+            out_name += f"_{corner_version}"
 
-if __name__ == "__main__":
-    engine = DocumentScannerEngine()
-    test_img = "data/real/pic10.jpg" 
-    
-    
-    # engine.process(test_img, corner_version="heatmap_v2")
-    
-    
-    # engine.process("temp_rectified.jpg", enhancer_version="enhancer_v1")
-    
-    
-    engine.process(test_img, corner_version="heatmap_v2", enhancer_version="enhancer_v1")
+        if enhancer_version:
+            print(f"Enhancing with {enhancer_version}...")
+            enhancer_model = self.load_enhancer_model(enhancer_version)
+            current_img = self.enhance_tiled(img_rgb, enhancer_model)
+            out_name += f"_{enhancer_version}"
+
+        if not corner_version and not enhancer_version:
+            return None
+
+        final_path = os.path.join(self.output_dir, f"{out_name}.jpg")
+        cv2.imwrite(final_path, current_img)
+        print(f"Success! Saved to {final_path}")
+        return final_path
