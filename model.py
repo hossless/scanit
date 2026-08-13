@@ -1,6 +1,21 @@
 import torch
 import torch.nn as nn
 
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.double_conv(x)
+
 class DirectRegressionNet(nn.Module):
     def __init__(self):
         super(DirectRegressionNet, self).__init__()
@@ -48,36 +63,35 @@ class DirectRegressionNet(nn.Module):
     
 
 class HeatmapCornerNet(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_prob=0.2):
         super(HeatmapCornerNet, self).__init__()
         
-        # ENCODER
-        self.enc1 = nn.Sequential(nn.Conv2d(3, 16, kernel_size=3, padding=1), nn.ReLU())
+        # ENCODER (Using DoubleConv + BatchNorm)
+        self.enc1 = DoubleConv(3, 16)
         self.pool1 = nn.MaxPool2d(2) 
         
-        self.enc2 = nn.Sequential(nn.Conv2d(16, 32, kernel_size=3, padding=1), nn.ReLU())
+        self.enc2 = DoubleConv(16, 32)
         self.pool2 = nn.MaxPool2d(2) 
         
-        self.enc3 = nn.Sequential(nn.Conv2d(32, 64, kernel_size=3, padding=1), nn.ReLU())
+        self.enc3 = DoubleConv(32, 64)
         self.pool3 = nn.MaxPool2d(2) 
         
-        # BOTTLENECK
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, padding=1), 
-            nn.ReLU()
-        ) 
+        # BOTTLENECK with Dropout
+        self.bottleneck_conv = DoubleConv(64, 128)
+        self.bottleneck_drop = nn.Dropout2d(dropout_prob)
         
-        # DECODER (With Skip Connections)
+        # DECODER (With Skip Connections & DoubleConv)
         self.up3 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2) 
-        self.dec3 = nn.Sequential(nn.Conv2d(64 + 64, 64, kernel_size=3, padding=1), nn.ReLU())
+        self.dec3 = DoubleConv(128, 64)
+        self.drop3 = nn.Dropout2d(dropout_prob)
         
         self.up2 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2) 
-        self.dec2 = nn.Sequential(nn.Conv2d(32 + 32, 32, kernel_size=3, padding=1), nn.ReLU())
+        self.dec2 = DoubleConv(64, 32)
         
         self.up1 = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2) 
-        self.dec1 = nn.Sequential(nn.Conv2d(16 + 16, 16, kernel_size=3, padding=1), nn.ReLU())
+        self.dec1 = DoubleConv(32, 16)
         
-        # FINAL HEAD (4 Channels for the 4 corners)
+        # FINAL HEAD
         self.final_conv = nn.Conv2d(16, 4, kernel_size=3, padding=1)
         self.sigmoid = nn.Sigmoid()
 
@@ -93,12 +107,14 @@ class HeatmapCornerNet(nn.Module):
         p3 = self.pool3(e3)
         
         # Bottleneck
-        b = self.bottleneck(p3)
+        b = self.bottleneck_conv(p3)
+        b = self.bottleneck_drop(b)
         
         # Decoder Pass with Skip Connections
         d3 = self.up3(b)
         d3 = torch.cat((d3, e3), dim=1) 
         d3 = self.dec3(d3)
+        d3 = self.drop3(d3)
         
         d2 = self.up2(d3)
         d2 = torch.cat((d2, e2), dim=1)
@@ -111,23 +127,6 @@ class HeatmapCornerNet(nn.Module):
         out = self.final_conv(d1)
         return self.sigmoid(out)
 
-import torch
-import torch.nn as nn
-
-class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        return self.double_conv(x)
 
 class UNetEnhancer(nn.Module):
     def __init__(self, dropout_prob=0.2):
