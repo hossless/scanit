@@ -16,33 +16,39 @@ class DoubleConv(nn.Module):
     def forward(self, x):
         return self.double_conv(x)
 
+
 class DirectRegressionNet(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_prob=0.5):
         super(DirectRegressionNet, self).__init__()
         
         self.encoder = nn.Sequential(
             # Layer 1: Input (3, 256, 256) -> Output (16, 128, 128)
             nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             
             # Layer 2: Output (32, 64, 64)
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2),
             
             # Layer 3: Output (64, 32, 32)
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2),
             
             # Layer 4: Output (128, 16, 16)
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
             nn.MaxPool2d(2),
             
             # Layer 5: Output (256, 8, 8)
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
             nn.MaxPool2d(2)
         )
@@ -50,8 +56,9 @@ class DirectRegressionNet(nn.Module):
         self.fc_head = nn.Sequential(
             nn.Flatten(),
             nn.Linear(256 * 8 * 8, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
-
+            nn.Dropout(p=dropout_prob),
             nn.Linear(512, 8),
             nn.Sigmoid()
         )
@@ -60,7 +67,6 @@ class DirectRegressionNet(nn.Module):
         features = self.encoder(x)
         coordinates = self.fc_head(features)
         return coordinates
-    
 
 class HeatmapCornerNet(nn.Module):
     def __init__(self, dropout_prob=0.2):
