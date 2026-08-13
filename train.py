@@ -140,7 +140,7 @@ def train_enhancement_model(epochs=20):
 
     model = UNetEnhancer().to(device)
     
-    criterion = DocumentEnhancementLoss(alpha=1.0, beta=1.0, gamma=0.5).to(device)
+    criterion = DocumentEnhancementLoss(alpha=0.15, beta=0.35, gamma=0.50).to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     train_losses, val_losses = [], []

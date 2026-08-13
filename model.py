@@ -111,6 +111,9 @@ class HeatmapCornerNet(nn.Module):
         out = self.final_conv(d1)
         return self.sigmoid(out)
 
+import torch
+import torch.nn as nn
+
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -127,18 +130,23 @@ class DoubleConv(nn.Module):
         return self.double_conv(x)
 
 class UNetEnhancer(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_prob=0.2):
         super(UNetEnhancer, self).__init__()
         
-        # ENCODER (Downsampling & Feature Extraction)
+        # ENCODER
         self.inc = DoubleConv(3, 32)
         self.down1 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(32, 64))
         self.down2 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(64, 128))
         self.down3 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(128, 256))
         
-        # DECODER (Upsampling & Skip Connections)
+        # BOTTLENECK
+        self.bottleneck_conv = DoubleConv(256, 256)
+        self.bottleneck_drop = nn.Dropout2d(dropout_prob)
+        
+        # DECODER
         self.up1 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
         self.conv_up1 = DoubleConv(256, 128)
+        self.drop1 = nn.Dropout2d(dropout_prob)
         
         self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
         self.conv_up2 = DoubleConv(128, 64)
@@ -157,10 +165,15 @@ class UNetEnhancer(nn.Module):
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         
+        # Bottleneck
+        b = self.bottleneck_conv(x4)
+        b = self.bottleneck_drop(b)
+        
         # Decoder
-        x = self.up1(x4)
+        x = self.up1(b)
         x = torch.cat([x, x3], dim=1) 
         x = self.conv_up1(x)
+        x = self.drop1(x)
         
         x = self.up2(x)
         x = torch.cat([x, x2], dim=1)
