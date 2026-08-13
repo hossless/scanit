@@ -3,7 +3,10 @@ import cv2
 import torch
 import numpy as np
 
-from model import HeatmapCornerNet, UNetEnhancer, DirectRegressionNet
+from model import (
+    HeatmapCornerNet, UNetEnhancer, DirectRegressionNet,
+    HeatmapCornerNetLegacy, UNetEnhancerLegacy, DirectRegressionNetLegacy
+)
 
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -43,10 +46,12 @@ class DocumentScannerEngine:
         if not model_type:
             raise FileNotFoundError(f"Oops! No valid weights found in models/{version_name}/")
             
+        is_legacy = "v1" in version_name.lower() or "v2" in version_name.lower()
+            
         if model_type == "direct":
-            model = DirectRegressionNet().to(self.device)
+            model = DirectRegressionNetLegacy().to(self.device) if is_legacy else DirectRegressionNet().to(self.device)
         else:
-            model = HeatmapCornerNet().to(self.device)
+            model = HeatmapCornerNetLegacy().to(self.device) if is_legacy else HeatmapCornerNet().to(self.device)
             
         model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         model.eval()
@@ -56,7 +61,10 @@ class DocumentScannerEngine:
         model_path = os.path.join("models", version_name, "enhancer_best.pth")
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Enhancer weights missing at {model_path}")
-        model = UNetEnhancer().to(self.device)
+            
+        is_legacy = "v1" in version_name.lower()
+        model = UNetEnhancerLegacy().to(self.device) if is_legacy else UNetEnhancer().to(self.device)
+        
         model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         model.eval()
         return model
