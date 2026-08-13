@@ -11,7 +11,6 @@ def get_engine():
 engine = get_engine()
 
 def get_available_models():
-    """Dynamically scans the models directory for BOTH heatmap and direct checkpoints!"""
     models_dir = "models"
     corner_models, enhancer_models = [], []
     
@@ -50,6 +49,14 @@ enhancer_model = st.sidebar.selectbox(
     help="Select the U-Net model used to flatten lighting and sharpen text."
 )
 
+st.sidebar.markdown("---")
+st.sidebar.header("Processing Settings")
+use_tiling = st.sidebar.checkbox(
+    "Enable Grid Tiling (High-Res Preserve)", 
+    value=True,
+    help="Slices the image into a grid for enhancement. Uncheck for a faster single-pass resize."
+)
+
 
 uploaded_file = st.file_uploader("Upload document photo...", type=["jpg", "jpeg", "png"])
 
@@ -70,7 +77,13 @@ if uploaded_file is not None:
         enhancer_opt = None if enhancer_model == "None" else enhancer_model
         
         with st.spinner("Processing document..."):
-            final_output_path = engine.process(temp_upload_path, corner_version=corner_opt, enhancer_version=enhancer_opt)
+            
+            final_output_path = engine.process(
+                temp_upload_path, 
+                corner_version=corner_opt, 
+                enhancer_version=enhancer_opt,
+                use_tiling=use_tiling 
+            )
             
             heatmap_path = None
             corners_path = None

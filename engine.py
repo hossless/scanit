@@ -111,27 +111,47 @@ class DocumentScannerEngine:
         transform_matrix = cv2.getPerspectiveTransform(ordered_corners, dst_points)
         return cv2.warpPerspective(img, transform_matrix, (max_width, max_height))
 
-    def enhance_tiled(self, img_rgb, enhancer_model, patch_size=512, overlap=0.5):
-        h, w, c = img_rgb.shape
-        stride = int(patch_size * (1 - overlap))
+    def enhance_single_pass(self, img_rgb, enhancer_model, target_size=(512, 512)):
+        """Fast pass: resizes full image to model size and resizes back."""
+        orig_h, orig_w = img_rgb.shape[:2]
+        img_resized = cv2.resize(img_rgb, target_size)
+        
+        input_tensor = torch.tensor(img_resized, dtype=torch.float32).permute(2, 0, 1) / 255.0
+        input_tensor = input_tensor.unsqueeze(0).to(self.device)
 
+        with torch.no_grad():
+            pred = enhancer_model(input_tensor)[0]
+
+        pred_np = pred.cpu().permute(1, 2, 0).numpy()
+        pred_uint8 = np.clip(pred_np * 255.0, 0, 255).astype(np.uint8)
+        
+        restored_bgr = cv2.cvtColor(pred_uint8, cv2.COLOR_RGB2BGR)
+        return cv2.resize(restored_bgr, (orig_w, orig_h))
+
+    def enhance_grid_tiled(self, img_rgb, enhancer_model, patch_size=512, context=32):
+        """Clean non-overlapping grid stitching using context cropping to prevent seams."""
+        h, w, c = img_rgb.shape
+        
+        
         pad_h = (patch_size - h % patch_size) % patch_size
         pad_w = (patch_size - w % patch_size) % patch_size
-        img_padded = np.pad(img_rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode='reflect')
-        new_h, new_w, _ = img_padded.shape
+        
+        
+        img_padded = np.pad(
+            img_rgb, 
+            ((context, pad_h + context), (context, pad_w + context), (0, 0)), 
+            mode='reflect'
+        )
+        
+        
+        new_h, new_w = h + pad_h, w + pad_w
+        output_padded = np.zeros((new_h, new_w, c), dtype=np.float32)
 
-        result_accumulator = np.zeros((new_h, new_w, c), dtype=np.float32)
-        weight_accumulator = np.zeros((new_h, new_w, c), dtype=np.float32)
-
-        y_grid, x_grid = np.ogrid[:patch_size, :patch_size]
-        center = patch_size / 2
-        dist = np.sqrt((x_grid - center)**2 + (y_grid - center)**2)
-        patch_weight = np.clip(1.0 - (dist / (patch_size / 2 * 1.5)), 0.1, 1.0)
-        patch_weight = np.expand_dims(patch_weight, axis=-1)
-
-        for y in range(0, new_h - patch_size + 1, stride):
-            for x in range(0, new_w - patch_size + 1, stride):
-                patch = img_padded[y:y+patch_size, x:x+patch_size]
+        for y in range(0, new_h, patch_size):
+            for x in range(0, new_w, patch_size):
+                
+                patch = img_padded[y : y + patch_size + 2 * context, x : x + patch_size + 2 * context]
+                
                 patch_tensor = torch.tensor(patch, dtype=torch.float32).permute(2, 0, 1) / 255.0
                 patch_tensor = patch_tensor.unsqueeze(0).to(self.device)
 
@@ -139,12 +159,14 @@ class DocumentScannerEngine:
                     pred_patch = enhancer_model(patch_tensor)[0]
 
                 pred_patch_np = pred_patch.cpu().permute(1, 2, 0).numpy()
-                result_accumulator[y:y+patch_size, x:x+patch_size] += pred_patch_np * patch_weight
-                weight_accumulator[y:y+patch_size, x:x+patch_size] += patch_weight
+                
+                
+                cropped_pred = pred_patch_np[context : context + patch_size, context : context + patch_size]
+                
+                
+                output_padded[y : y + patch_size, x : x + patch_size] = cropped_pred
 
-        final_padded_img = result_accumulator / weight_accumulator
-        final_img = final_padded_img[:h, :w]
-        
+        final_img = output_padded[:h, :w]
         final_img_uint8 = np.clip(final_img * 255.0, 0, 255).astype(np.uint8)
         return cv2.cvtColor(final_img_uint8, cv2.COLOR_RGB2BGR)
 
@@ -229,7 +251,7 @@ class DocumentScannerEngine:
         plt.close()
         return out_path
 
-    def process(self, image_path, corner_version=None, enhancer_version=None):
+    def process(self, image_path, corner_version=None, enhancer_version=None, use_tiling=True):
         base_name = os.path.basename(image_path).split('.')[0]
         img = cv2.imread(image_path)
         if img is None:
@@ -249,10 +271,16 @@ class DocumentScannerEngine:
             out_name += f"_{corner_version}"
 
         if enhancer_version:
-            print(f"Enhancing with {enhancer_version}...")
+            mode_str = "grid" if use_tiling else "single_pass"
+            print(f"Enhancing with {enhancer_version} (mode: {mode_str})...")
             enhancer_model = self.load_enhancer_model(enhancer_version)
-            current_img = self.enhance_tiled(img_rgb, enhancer_model)
-            out_name += f"_{enhancer_version}"
+            
+            if use_tiling:
+                current_img = self.enhance_grid_tiled(img_rgb, enhancer_model)
+            else:
+                current_img = self.enhance_single_pass(img_rgb, enhancer_model)
+                
+            out_name += f"_{enhancer_version}_{mode_str}"
 
         if not corner_version and not enhancer_version:
             return None
