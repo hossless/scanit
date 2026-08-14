@@ -1,4 +1,5 @@
 import torch
+import kornia
 import torch.nn as nn
 
 class DoubleConv(nn.Module):
@@ -357,3 +358,44 @@ class UNetEnhancer(nn.Module):
         
         out = self.final_conv(x)
         return self.sigmoid(out)
+
+# ======================
+#   END-TO-END MODEL
+#=======================
+
+class EndToEndScanner(nn.Module):
+    def __init__(self, corner_model, enhancer_model):
+        super(EndToEndScanner, self).__init__()
+        self.corner_model = corner_model
+        self.enhancer_model = enhancer_model
+        
+        self.register_buffer('dst_points', torch.tensor([
+            [[0.0, 0.0], 
+             [511.0, 0.0], 
+             [511.0, 511.0], 
+             [0.0, 511.0]]
+        ], dtype=torch.float32))
+
+    def forward(self, img_256, img_512):
+        batch_size = img_256.size(0)
+        
+        corner_preds = self.corner_model(img_256)
+        
+        corner_preds = corner_preds.view(batch_size, 4, 2)
+        
+
+        src_points = corner_preds * 512.0
+        
+        dst_points_batch = self.dst_points.expand(batch_size, -1, -1)
+        
+        M = kornia.geometry.transform.get_perspective_transform(src_points, dst_points_batch)
+        
+
+        warped_crops = kornia.geometry.transform.warp_perspective(
+            img_512, M, dsize=(512, 512), align_corners=True
+        )
+        
+
+        final_enhanced = self.enhancer_model(warped_crops)
+        
+        return corner_preds, final_enhanced
