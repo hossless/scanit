@@ -46,7 +46,7 @@ class DocumentScannerEngine:
         if not model_type:
             raise FileNotFoundError(f"Oops! No valid weights found in models/{version_name}/")
             
-        is_legacy = "v1" in version_name.lower() or "v2" in version_name.lower()
+        is_legacy = ("v1" in version_name.lower() or "v2" in version_name.lower()) and "e2e" not in version_name.lower()
             
         if model_type == "direct":
             model = DirectRegressionNetLegacy().to(self.device) if is_legacy else DirectRegressionNet().to(self.device)
@@ -62,7 +62,7 @@ class DocumentScannerEngine:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Enhancer weights missing at {model_path}")
             
-        is_legacy = "v1" in version_name.lower()
+        is_legacy = "v1" in version_name.lower() and "e2e" not in version_name.lower()
         model = UNetEnhancerLegacy().to(self.device) if is_legacy else UNetEnhancer().to(self.device)
         
         model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
