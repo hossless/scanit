@@ -1,0 +1,21 @@
+# Deep learning core
+torch==2.13.0            # developed with the CPU build (2.13.0+cpu); for GPU support install the CUDA wheel per pytorch.org
+kornia==0.8.3
+numpy==2.4.4
+
+# Image processing / plotting
+opencv-python==5.0.0.93
+pillow==12.2.0
+matplotlib==3.11.1
+
+# Losses & metrics
+pytorch-msssim==1.0.0
+
+# Training utilities
+tqdm==4.70.0
+
+# Streamlit demo app
+streamlit==1.61.1
+
+# OCR benchmark (ocr.py) — also requires the Tesseract binary + `eng`/`fas` language data
+pytesseract==0.3.13
